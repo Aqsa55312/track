@@ -1,0 +1,204 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Dashboard Admin - Web Tracking Internal</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="" />
+  <style>
+    * { box-sizing: border-box; }
+    body { margin: 0; font-family: Arial, Helvetica, sans-serif; background: #f1f3f6; color: #222; }
+    .container { max-width: 1100px; margin: 0 auto; padding: 20px; }
+    h1 { margin: 10px 0 20px; font-size: 26px; }
+    .card { background: #fff; border-radius: 10px; padding: 18px; box-shadow: 0 2px 8px rgba(0,0,0,0.08); margin-bottom: 18px; }
+    .card h2 { margin: 0 0 12px; font-size: 18px; }
+    label { display: block; font-size: 14px; margin-bottom: 6px; font-weight: bold; }
+    .row { display: flex; gap: 10px; flex-wrap: wrap; }
+    input[type="text"] { flex: 1; min-width: 220px; padding: 10px 12px; border: 1px solid #ccc; border-radius: 8px; font-size: 15px; }
+    button { padding: 10px 18px; border: 0; border-radius: 8px; background: #1a73e8; color: #fff; font-size: 15px; cursor: pointer; }
+    button:hover { background: #155fc0; }
+    #result { margin-top: 12px; display: none; background: #eef6ee; border: 1px solid #b9ddb9; padding: 12px; border-radius: 8px; }
+    #result a { color: #0b57d0; word-break: break-all; }
+    #copyBtn { background: #0f9d58; margin-left: 8px; }
+    #status { margin-top: 8px; font-size: 13px; color: #555; }
+    #log { font-size: 13px; color: #333; max-height: 140px; overflow-y: auto; background: #fafafa; border: 1px solid #e3e3e3; border-radius: 8px; padding: 10px; margin-top: 10px; }
+    #map { height: 520px; width: 100%; border-radius: 10px; border: 1px solid #ddd; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>Dashboard Admin - Web Tracking Internal</h1>
+
+    <div class="card">
+      <h2>Buat Link Tracking</h2>
+      <form id="targetForm">
+        <label for="targetName">Nama Target</label>
+        <div class="row">
+          <input type="text" id="targetName" name="targetName" placeholder="Contoh: Budi / Kendaraan 01" required maxlength="255" autocomplete="off" />
+          <button type="submit">Buat Link Tracking</button>
+        </div>
+      </form>
+      <div id="result">
+        <strong>Link Tracking:</strong><br />
+        <a id="trackingLink" href="#" target="_blank" rel="noopener"></a>
+        <button type="button" id="copyBtn">Copy</button>
+      </div>
+      <div id="status">Menunggu data lokasi real-time...</div>
+      <div id="log"></div>
+    </div>
+
+    <div class="card">
+      <h2>Peta Live Tracking</h2>
+      <div id="map"></div>
+    </div>
+  </div>
+
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+  <script src="/socket.io/socket.io.js"></script>
+  <script>
+    (function () {
+      var map = L.map('map').setView([-6.9175, 107.6191], 13);
+
+      L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        maxZoom: 19,
+        attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
+      }).addTo(map);
+
+      var marker = null;
+      var circle = null;
+
+      var form = document.getElementById('targetForm');
+      var input = document.getElementById('targetName');
+      var resultBox = document.getElementById('result');
+      var linkEl = document.getElementById('trackingLink');
+      var copyBtn = document.getElementById('copyBtn');
+      var statusEl = document.getElementById('status');
+      var logEl = document.getElementById('log');
+
+      form.addEventListener('submit', async function (e) {
+        e.preventDefault();
+        var targetName = input.value.trim();
+        if (!targetName) return;
+
+        statusEl.textContent = 'Membuat link...';
+
+        try {
+          var res = await fetch('/api/targets', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ targetName: targetName })
+          });
+          var json = await res.json();
+          if (!res.ok || !json.success) {
+            throw new Error((json && json.message) || 'Gagal membuat link');
+          }
+          var url = json.data.trackingUrl;
+          linkEl.href = url;
+          linkEl.textContent = url;
+          resultBox.style.display = 'block';
+          statusEl.textContent = 'Link untuk "' + json.data.targetName + '" berhasil dibuat. Kirim link tersebut ke target.';
+          input.value = '';
+        } catch (err) {
+          statusEl.textContent = 'Error: ' + err.message;
+        }
+      });
+
+      copyBtn.addEventListener('click', async function () {
+        var text = linkEl.textContent;
+        try {
+          await navigator.clipboard.writeText(text);
+          copyBtn.textContent = 'Copied!';
+          setTimeout(function () { copyBtn.textContent = 'Copy'; }, 1500);
+        } catch (err) {
+          var ta = document.createElement('textarea');
+          ta.value = text;
+          document.body.appendChild(ta);
+          ta.select();
+          try { document.execCommand('copy'); } catch (e) {}
+          document.body.removeChild(ta);
+          copyBtn.textContent = 'Copied!';
+          setTimeout(function () { copyBtn.textContent = 'Copy'; }, 1500);
+        }
+      });
+
+      function showLocation(data) {
+        if (!data || typeof data.lat !== 'number' || typeof data.lng !== 'number') return;
+
+        var lat = data.lat;
+        var lng = data.lng;
+        var acc = typeof data.accuracy === 'number' && !isNaN(data.accuracy) ? data.accuracy : 0;
+        var name = data.targetName || 'Unknown';
+        var time = data.timestamp ? new Date(data.timestamp).toLocaleString('id-ID') : new Date().toLocaleString('id-ID');
+
+        // Hindari render duplikat saat polling (bandingkan update terakhir)
+        var key = name + '|' + lat + '|' + lng + '|' + time;
+        if (showLocation._lastKey === key) return;
+        showLocation._lastKey = key;
+
+        if (marker) { map.removeLayer(marker); marker = null; }
+        if (circle) { map.removeLayer(circle); circle = null; }
+
+        marker = L.marker([lat, lng]).addTo(map);
+        marker.bindPopup('<b>' + escapeHtml(name) + '</b><br/>Lat: ' + lat + '<br/>Lng: ' + lng + '<br/>Akurasi: ' + acc + ' m<br/>' + escapeHtml(time)).openPopup();
+
+        circle = L.circle([lat, lng], {
+          radius: acc > 0 ? acc : 25,
+          color: '#1a73e8',
+          fillColor: '#1a73e8',
+          fillOpacity: 0.25,
+          weight: 2
+        }).addTo(map);
+
+        map.setView([lat, lng], 17);
+
+        statusEl.textContent = 'Update terakhir: ' + name + ' @ ' + time + ' (akurasi ' + acc + ' m)';
+        var div = document.createElement('div');
+        div.textContent = '[' + time + '] ' + name + ' -> ' + lat + ', ' + lng + ' (±' + acc + ' m)';
+        logEl.prepend(div);
+      }
+
+      // Realtime via Socket.io (jalan penuh saat run lokal / Render / Railway).
+      // Di Vercel serverless socket tidak persisten, jadi ada fallback polling di bawah.
+      try {
+        if (typeof io !== 'undefined') {
+          var socket = io();
+
+          socket.on('connect', function () {
+            statusEl.textContent = 'Terhubung ke server real-time. Menunggu data lokasi...';
+          });
+
+          socket.on('disconnect', function () {
+            statusEl.textContent = 'Koneksi real-time terputus. Pakai mode polling tiap 5 detik...';
+          });
+
+          socket.on('new-location', showLocation);
+        }
+      } catch (e) {
+        statusEl.textContent = 'Socket tidak tersedia, pakai mode polling tiap 5 detik...';
+      }
+
+      // Fallback polling: wajib untuk deploy Vercel
+      async function pollLatest() {
+        try {
+          var res = await fetch('/api/locations/latest?limit=1');
+          var json = await res.json();
+          if (json && json.success && json.data && json.data.length > 0) {
+            showLocation(json.data[0]);
+          }
+        } catch (e) {}
+      }
+      setInterval(pollLatest, 5000);
+      pollLatest();
+
+      function escapeHtml(s) {
+        return String(s)
+          .replace(/&/g, '&amp;')
+          .replace(/</g, '&lt;')
+          .replace(/>/g, '&gt;')
+          .replace(/"/g, '&quot;')
+          .replace(/'/g, '&#039;');
+      }
+    })();
+  </script>
+</body>
+</html>

